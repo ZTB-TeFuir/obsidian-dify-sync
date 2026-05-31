@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-dify-sync",
+  "name": "Obsidian Dify Sync",
+  "version": "1.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "双向同步 Obsidian 笔记与 Dify 知识库",
+  "author": "ztb",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}
