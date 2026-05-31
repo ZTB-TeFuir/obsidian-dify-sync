@@ -1,11 +1,9 @@
 {
   "apiBase": "https://api.dify.ai/v1",
-  "apiKey": "",
-  "datasetId": "08dfcd3f-51ed-4997-b1be-c79675247cb7",
+  "apiKey": "Dify的apiKey",
+  "datasetId": "Dify中知识库Id",
+  // docMap是Dify文件在本地的映射，在同步到Dify时判断哪些文件需要上传
   "docMap": {
-    "未命名 1": "f87dfb18-cc4a-4007-abdd-a89dfd850c1b",
-    "未命名": "fbe11369-5d85-433f-968d-71e9212f55c9",
-    "vue3plustsplusqiankun-初体验qiankun基本介绍": "751deb57-a400-45a5-ba0a-bb40e87635d1",
-    "基于-Vue-3-plus-Monorepo-plus": "5bae07a4-e179-4043-a090-8a43691c3bc2"
+    "文件名": "Dify知识库中对应的文件Id"
   }
 }
