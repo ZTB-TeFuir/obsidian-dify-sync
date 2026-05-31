@@ -36,6 +36,10 @@ var DifySyncPlugin = class extends import_obsidian.Plugin {
     this.docMap = {};
     // 被修改过但尚未同步的文件
     this.dirtyFiles = /* @__PURE__ */ new Set();
+    // 恢复中的文件，跳过 create 事件的自动上传
+    this.skipCreate = /* @__PURE__ */ new Set();
+    // 插件初始化完成，防止启动时触发自动上传
+    this.ready = false;
   }
   async onload() {
     await this.loadSettings();
@@ -60,13 +64,18 @@ var DifySyncPlugin = class extends import_obsidian.Plugin {
     });
     this.registerEvent(
       this.app.vault.on("create", (file) => {
-        if (file instanceof import_obsidian.TFile && file.extension === "md") {
-          this.uploadFileToDify(file);
+        if (!this.ready) return;
+        if (!(file instanceof import_obsidian.TFile) || file.extension !== "md") return;
+        if (this.skipCreate.has(file.basename)) {
+          this.skipCreate.delete(file.basename);
+          return;
         }
+        this.uploadFileToDify(file);
       })
     );
     this.registerEvent(
       this.app.vault.on("modify", (file) => {
+        if (!this.ready) return;
         if (file instanceof import_obsidian.TFile && file.extension === "md") {
           this.dirtyFiles.add(file.basename);
         }
@@ -74,12 +83,36 @@ var DifySyncPlugin = class extends import_obsidian.Plugin {
     );
     this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        if (file instanceof import_obsidian.TFile && file.extension === "md") {
-          this.deleteFromDify(file.basename);
-        }
+        if (!(file instanceof import_obsidian.TFile) || file.extension !== "md") return;
+        if (!this.docMap[file.basename]) return;
+        new DeleteConfirmModal(
+          this.app,
+          `\u300C${file.basename}\u300D\u5DF2\u4ECE\u672C\u5730\u5220\u9664\uFF0C\u5982\u4F55\u5904\u7406 Dify \u4E2D\u7684\u6587\u6863\uFF1F`,
+          // 从 Dify 拉取：下载恢复文件
+          async () => {
+            try {
+              const docId = this.docMap[file.basename];
+              const downloadRes = await this.request("GET", `/datasets/${this.settings.datasetId}/documents/${docId}/download`);
+              if (downloadRes.url) {
+                const res = await (0, import_obsidian.requestUrl)({ url: downloadRes.url, method: "GET" });
+                this.skipCreate.add(file.basename);
+                await this.app.vault.create(file.path, res.text);
+                new import_obsidian.Notice(`\u5DF2\u6062\u590D: ${file.name}`);
+              }
+            } catch (e) {
+              new import_obsidian.Notice(`\u6062\u590D\u5931\u8D25: ${e.message}`);
+            }
+          },
+          // 从 Dify 删除
+          () => this.deleteFromDify(file.basename)
+        ).open();
       })
     );
     this.addSettingTab(new DifySyncSettingTab(this.app, this));
+    const timer = setTimeout(() => {
+      this.ready = true;
+      clearTimeout(timer);
+    }, 1e3);
   }
   async loadSettings() {
     const data = await this.loadData();
@@ -99,6 +132,10 @@ var DifySyncPlugin = class extends import_obsidian.Plugin {
       datasetId: this.settings.datasetId,
       docMap: this.docMap
     });
+  }
+  // 检测配置缺失时弹出设置弹框
+  promptSettings(onSubmit) {
+    new SettingsModal(this.app, this, onSubmit).open();
   }
   // 通用 JSON 请求
   async request(method, path, body) {
@@ -146,7 +183,7 @@ var DifySyncPlugin = class extends import_obsidian.Plugin {
   // 上传文件（创建或更新）
   async uploadFileToDify(file) {
     if (!this.settings.apiKey || !this.settings.datasetId) {
-      new import_obsidian.Notice("\u8BF7\u5148\u914D\u7F6E API Key \u548C\u77E5\u8BC6\u5E93 ID");
+      this.promptSettings(() => this.uploadFileToDify(file));
       return;
     }
     if (this.docMap[file.basename]) {
@@ -239,7 +276,7 @@ var DifySyncPlugin = class extends import_obsidian.Plugin {
   // 从 Dify 拉取文档（仅拉取本地不存在的新文档）
   async pullFromDify() {
     if (!this.settings.apiKey || !this.settings.datasetId) {
-      new import_obsidian.Notice("\u8BF7\u5148\u914D\u7F6E API Key \u548C\u77E5\u8BC6\u5E93 ID");
+      this.promptSettings(() => this.pullFromDify());
       return;
     }
     try {
@@ -257,6 +294,7 @@ var DifySyncPlugin = class extends import_obsidian.Plugin {
         const downloadUrl = downloadRes.url;
         if (!downloadUrl) continue;
         const fileResponse = await (0, import_obsidian.requestUrl)({ url: downloadUrl, method: "GET" });
+        this.skipCreate.add(name);
         await this.app.vault.create(name + ".md", fileResponse.text);
         success++;
       }
@@ -265,6 +303,59 @@ var DifySyncPlugin = class extends import_obsidian.Plugin {
     } catch (e) {
       new import_obsidian.Notice(`\u62C9\u53D6\u5931\u8D25: ${e.message}`);
     }
+  }
+};
+var DeleteConfirmModal = class extends import_obsidian.Modal {
+  constructor(app, message, onPull, onDelete) {
+    super(app);
+    this.message = message;
+    this.onPull = onPull;
+    this.onDelete = onDelete;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl("p", { text: this.message });
+    const btnContainer = contentEl.createDiv({ cls: "modal-button-container" });
+    const pullBtn = btnContainer.createEl("button", { text: "\u4ECE Dify \u62C9\u53D6" });
+    pullBtn.addEventListener("click", () => {
+      this.close();
+      this.onPull();
+    });
+    const deleteBtn = btnContainer.createEl("button", { text: "\u4ECE Dify \u5220\u9664" });
+    deleteBtn.classList.add("mod-warning");
+    deleteBtn.addEventListener("click", () => {
+      this.close();
+      this.onDelete();
+    });
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+var SettingsModal = class extends import_obsidian.Modal {
+  constructor(app, plugin, onSubmit) {
+    super(app);
+    this.plugin = plugin;
+    this.onSubmit = onSubmit;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.createEl("h3", { text: "\u914D\u7F6E Dify \u540C\u6B65" });
+    new import_obsidian.Setting(contentEl).setName("API \u57FA\u7840\u5730\u5740").addText((text) => text.setPlaceholder("https://api.dify.ai/v1").setValue(this.plugin.settings.apiBase).onChange((v) => this.plugin.settings.apiBase = v));
+    new import_obsidian.Setting(contentEl).setName("API Key").addText((text) => text.setPlaceholder("\u8F93\u5165 API Key").setValue(this.plugin.settings.apiKey).onChange((v) => this.plugin.settings.apiKey = v));
+    new import_obsidian.Setting(contentEl).setName("\u77E5\u8BC6\u5E93 ID").addText((text) => text.setPlaceholder("\u8F93\u5165\u77E5\u8BC6\u5E93 ID").setValue(this.plugin.settings.datasetId).onChange((v) => this.plugin.settings.datasetId = v));
+    const btnContainer = contentEl.createDiv({ cls: "modal-button-container" });
+    const submitBtn = btnContainer.createEl("button", { text: "\u4FDD\u5B58\u5E76\u7EE7\u7EED" });
+    submitBtn.addEventListener("click", async () => {
+      await this.plugin.saveSettings();
+      this.close();
+      this.onSubmit();
+    });
+    const cancelBtn = btnContainer.createEl("button", { text: "\u53D6\u6D88" });
+    cancelBtn.addEventListener("click", () => this.close());
+  }
+  onClose() {
+    this.contentEl.empty();
   }
 };
 var DifySyncSettingTab = class extends import_obsidian.PluginSettingTab {
