@@ -2,7 +2,6 @@
   "apiBase": "https://api.dify.ai/v1",
   "apiKey": "Dify的apiKey",
   "datasetId": "Dify中知识库Id",
-  // docMap是Dify文件在本地的映射，在同步到Dify时判断哪些文件需要上传
   "docMap": {
     "文件名": "Dify知识库中对应的文件Id"
   }
